@@ -25,6 +25,29 @@ polling interval needs tightening.
 
 ## Setup
 
+Pick a notification backend. If both are configured, Telegram wins.
+
+### Telegram (recommended)
+
+Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and
+follow the prompts. It replies with a token like `8123456789:AAF...`. Then open
+a chat with your new bot and send it any message — a bot cannot message you
+first, so this step is required.
+
+Add two repo secrets: `TELEGRAM_BOT_TOKEN` (the token) and `TELEGRAM_CHAT_ID`
+(your numeric chat id). To find the chat id after messaging the bot:
+
+```sh
+curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][-1]['message']['chat']['id'])"
+```
+
+Telegram is free with no message limits that matter here, and its iOS push is
+far more reliable than ntfy's — ntfy on iPhone depends on a third-party server
+holding your APNs device token, which is a common point of failure.
+
+### ntfy (fallback)
+
 **1. Pick an ntfy topic.** It's a password, not a username — anyone who knows it
 can read your alerts. Use something unguessable:
 

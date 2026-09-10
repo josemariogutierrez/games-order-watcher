@@ -38,6 +38,9 @@ jobs:
         id: watch
         continue-on-error: true
         env:
+          # Telegram takes priority when both are set; ntfy stays as a fallback.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           PYTHONUNBUFFERED: "1"  # keep stdout/stderr interleaved in the CI log
           # Repo variable. Set to 1 to alert on every new post; unset or 0 to

@@ -231,11 +231,11 @@ def save_state(state: dict) -> None:
 # --------------------------------------------------------------------------
 
 
-def ntfy_send(topic: str, title: str, body: str, click: str | None,
-              priority: str, tags: str, dry_run: bool) -> None:
-    if dry_run or not topic:
-        print(f"    [dry-run] {title}\n      {body[:200]}")
-        return
+def ntfy_send(topic: str, title: str, lead: str, body: str, click: str | None,
+              priority: str, tags: str) -> None:
+    text = f"**{lead}**\n\n{body}"
+    if click:
+        text += f"\n\n{click}"
     headers = {
         "Title": ascii_header(title),
         "Priority": priority,
@@ -246,12 +246,58 @@ def ntfy_send(topic: str, title: str, body: str, click: str | None,
         headers["Click"] = click
     request = urllib.request.Request(
         f"https://ntfy.sh/{topic}",
-        data=body.encode("utf-8"),
+        data=text.encode("utf-8"),
         headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=20) as response:
         response.read()
+
+
+def telegram_send(token: str, chat_id: str, title: str, lead: str, body: str,
+                  click: str | None) -> None:
+    def esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    text = f"<b>{esc(title)}</b>\n\n<b>{esc(lead)}</b>\n\n{esc(body)}"
+    if click:
+        text += f"\n\n{click}"
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": text[:4000],  # Telegram caps messages at 4096 chars
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        result = json.loads(response.read())
+    if not result.get("ok"):
+        raise OSError(f"Telegram rejected the message: {result}")
+
+
+def send_alert(title: str, lead: str, body: str, click: str | None,
+               priority: str, tags: str, dry_run: bool) -> None:
+    """Send via Telegram when it's configured, otherwise ntfy."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    topic = os.environ.get("NTFY_TOPIC", "").strip()
+
+    if dry_run:
+        via = "telegram" if (token and chat_id) else "ntfy" if topic else "nowhere"
+        print(f"    [dry-run via {via}] {title}\n      {lead}\n      {body[:160]}")
+        return
+    if token and chat_id:
+        telegram_send(token, chat_id, title, lead, body, click)
+    elif topic:
+        ntfy_send(topic, title, lead, body, click, priority, tags)
+    else:
+        raise OSError("No notification backend configured "
+                      "(set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, or NTFY_TOPIC)")
 
 
 def humanize_age(seconds: float) -> str:
@@ -266,9 +312,9 @@ def humanize_age(seconds: float) -> str:
     return f"hace {hours // 24} d"
 
 
-def notify_post(topic: str, post: dict, matched: list[str], dry_run: bool) -> None:
+def notify_post(post: dict, matched: list[str], dry_run: bool) -> None:
     already_gone = bool(SOLD_OUT_RE.search(post["text"]))
-    snippet = " ".join(post["text"].split())[:400]
+    snippet = " ".join(post["text"].split())[:600]
     title = f"{'[YA CERRADO] ' if already_gone else ''}Game drop: {', '.join(matched)}"
 
     # End-to-end lag, so you can see whether alerts are actually arriving fast.
@@ -278,13 +324,14 @@ def notify_post(topic: str, post: dict, matched: list[str], dry_run: bool) -> No
         delta = datetime.now(timezone.utc).timestamp() - post["created"]
         age = f" · publicado {humanize_age(delta)}"
 
-    body = f"**{', '.join(matched)}**{age}\n\n{snippet}\n\n{post['url']}"
+    lead = f"{', '.join(matched)}{age}"
     if already_gone:
-        body = "_Este post ya aparece marcado como agotado/cerrado._\n\n" + body
-    ntfy_send(
-        topic,
+        snippet = ("[Este post ya aparece marcado como agotado/cerrado]\n\n"
+                   + snippet)
+    send_alert(
         title,
-        body,
+        lead,
+        snippet,
         post["url"],
         priority="default" if already_gone else "high",
         tags="warning" if already_gone else "video_game",
@@ -321,10 +368,16 @@ def main() -> int:
         print(f"Outside active window ({now_bogota:%H:%M} Bogota) - skipping.")
         return 0
 
-    topic = os.environ.get("NTFY_TOPIC", "")
-    if not topic and not (args.dry_run or args.prime):
-        print("NTFY_TOPIC is not set.", file=sys.stderr)
+    has_telegram = bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+                        and os.environ.get("TELEGRAM_CHAT_ID", "").strip())
+    has_ntfy = bool(os.environ.get("NTFY_TOPIC", "").strip())
+    if not (has_telegram or has_ntfy) and not (args.dry_run or args.prime):
+        print("No notification backend configured. Set TELEGRAM_BOT_TOKEN and "
+              "TELEGRAM_CHAT_ID, or NTFY_TOPIC.", file=sys.stderr)
         return 2
+    if not args.prime:
+        backend = "telegram" if has_telegram else "ntfy" if has_ntfy else "nothing"
+        print(f"  notifying via {backend}")
 
     # Set the ALERT_ALL repo variable to 1 to be notified about every new post
     # regardless of keywords. Useful for confirming the pipeline works.
@@ -345,13 +398,12 @@ def main() -> int:
         if posts:
             post = posts[0]
             matched = match_keywords(post, keywords) or ["prueba"]
-            notify_post(topic, post, matched, args.dry_run)
+            notify_post(post, matched, args.dry_run)
             print(f"  sent, using real post {post['id']} ({', '.join(matched)})")
         else:
-            ntfy_send(
-                topic, "Game drop: prueba",
-                "**prueba**\n\nNotificacion de prueba. El watcher puede "
-                f"alcanzar tu telefono.\n\n{PAGE_URL}",
+            send_alert(
+                "Game drop: prueba", "prueba",
+                "Notificacion de prueba. El watcher puede alcanzar tu telefono.",
                 PAGE_URL, "high", "video_game", args.dry_run,
             )
             print("  page fetch failed, sent a synthetic test instead")
@@ -374,11 +426,11 @@ def main() -> int:
         print(f"  ! no posts parsed (failure #{state['consecutive_failures']})",
               file=sys.stderr)
         if state["consecutive_failures"] == FAILURE_ALERT_THRESHOLD:
-            ntfy_send(
-                topic,
+            send_alert(
                 "Game watcher is broken",
+                "watcher caido",
                 f"{FAILURE_ALERT_THRESHOLD} consecutive polls returned no posts. "
-                "Facebook may have changed the page or blocked the request.\n\n"
+                "Facebook may have changed the page or blocked the request. "
                 "Check the GitHub Actions logs.",
                 None, "high", "rotating_light", args.dry_run,
             )
@@ -414,7 +466,7 @@ def main() -> int:
             lag = f" lag={int((now_bogota.timestamp() - post['created']) // 60)}min"
         print(f"    MATCH {matched}{lag} {post['id']} {preview!r}")
         try:
-            notify_post(topic, post, matched, args.dry_run)
+            notify_post(post, matched, args.dry_run)
             alerted += 1
         except (urllib.error.URLError, OSError) as exc:
             print(f"    ! ntfy send failed: {exc}", file=sys.stderr)
