@@ -63,6 +63,37 @@ gives you no backlog. If it's been a while, re-prime first: Actions →
 currently visible as seen without alerting, so you only hear about genuinely
 new posts.
 
+## Testing that notifications reach your phone
+
+Three ways, no state changed and nothing marked as seen by any of them:
+
+```sh
+NTFY_TOPIC=your-topic python3 watcher.py --test    # from your machine
+```
+
+From GitHub (works from your phone via the GitHub app): Actions →
+*Watch game store* → Run workflow → check **test** → Run.
+
+Or the raw one-liner, which tests only ntfy and not the watcher:
+
+```sh
+curl -H "Title: Prueba" -H "Priority: high" -d "Test" ntfy.sh/your-topic
+```
+
+`--test` re-sends the newest real post through the normal notification path, so
+it exercises the actual title, priority, link and formatting — not a dummy
+string.
+
+## Alerting on every post
+
+Set the **`ALERT_ALL` repo variable** to `1` (Settings → Secrets and variables →
+Actions → *Variables*) to be notified about every new post regardless of
+keywords. Those alerts are labeled `post nuevo`; posts that *do* match a keyword
+still show the keyword.
+
+Set it to `0` or delete it to go back to keyword-only. It's a variable rather
+than a code change, so flipping it takes no commit and no redeploy.
+
 ## Editing keywords
 
 Edit `keywords.txt` and push. One per line, case- and accent-insensitive, so

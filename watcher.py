@@ -8,6 +8,7 @@ Usage:
     python3 watcher.py                # normal run
     python3 watcher.py --prime        # record current posts, notify nothing
     python3 watcher.py --dry-run      # print what would be sent
+    python3 watcher.py --test         # send one test notification
 """
 
 from __future__ import annotations
@@ -276,10 +277,12 @@ def main() -> int:
                         help="print notifications instead of sending them")
     parser.add_argument("--force", action="store_true",
                         help="run even outside the active hours window")
+    parser.add_argument("--test", action="store_true",
+                        help="send one test notification without touching state")
     args = parser.parse_args()
 
     now_bogota = datetime.now(BOGOTA)
-    if not (args.force or args.prime) and not within_active_window(now_bogota):
+    if not (args.force or args.prime or args.test) and not within_active_window(now_bogota):
         print(f"Outside active window ({now_bogota:%H:%M} Bogota) - skipping.")
         return 0
 
@@ -288,9 +291,40 @@ def main() -> int:
         print("NTFY_TOPIC is not set.", file=sys.stderr)
         return 2
 
-    state = load_state()
+    # Set the ALERT_ALL repo variable to 1 to be notified about every new post
+    # regardless of keywords. Useful for confirming the pipeline works.
+    alert_all = os.environ.get("ALERT_ALL", "").strip().lower() in {"1", "true", "yes"}
+
     keywords = load_keywords()
-    print(f"{now_bogota:%Y-%m-%d %H:%M} Bogota | {len(keywords)} keywords | "
+
+    if args.test:
+        # Re-send the newest real post through the normal notification path, so
+        # this exercises the actual title, priority, link and formatting rather
+        # than a dummy string. State is never touched.
+        print("Sending a test notification...")
+        try:
+            posts = parse_posts(fetch_page())
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            print(f"  ! fetch failed: {exc}", file=sys.stderr)
+            posts = []
+        if posts:
+            post = posts[0]
+            matched = match_keywords(post, keywords) or ["prueba"]
+            notify_post(topic, post, matched, args.dry_run)
+            print(f"  sent, using real post {post['id']} ({', '.join(matched)})")
+        else:
+            ntfy_send(
+                topic, "Game drop: prueba",
+                "**prueba**\n\nNotificacion de prueba. El watcher puede "
+                f"alcanzar tu telefono.\n\n{PAGE_URL}",
+                PAGE_URL, "high", "video_game", args.dry_run,
+            )
+            print("  page fetch failed, sent a synthetic test instead")
+        return 0
+
+    state = load_state()
+    mode = "ALERT_ALL (every new post)" if alert_all else f"{len(keywords)} keywords"
+    print(f"{now_bogota:%Y-%m-%d %H:%M} Bogota | {mode} | "
           f"{len(state['seen'])} posts already seen")
 
     try:
@@ -336,7 +370,9 @@ def main() -> int:
             continue
         matched = match_keywords(post, keywords)
         if not matched:
-            continue
+            if not alert_all:
+                continue
+            matched = ["post nuevo"]
         preview = " ".join(post["text"].split())[:70]
         lag = ""
         if post.get("created"):

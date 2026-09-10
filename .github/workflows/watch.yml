@@ -13,6 +13,10 @@ on:
         description: "Record current posts without sending alerts"
         type: boolean
         default: false
+      test:
+        description: "Send one test notification (changes nothing)"
+        type: boolean
+        default: false
 
 # watcher.py trims the edges to exactly 10:30-21:30 Bogota.
 
@@ -35,8 +39,13 @@ jobs:
         continue-on-error: true
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # Repo variable. Set to 1 to alert on every new post; unset or 0 to
+          # use keywords.txt. Toggle it in Settings without touching the code.
+          ALERT_ALL: ${{ vars.ALERT_ALL }}
         run: |
-          python3 watcher.py ${{ inputs.prime && '--prime --force' || '' }}
+          python3 watcher.py \
+            ${{ inputs.test && '--test' || '' }} \
+            ${{ inputs.prime && '--prime --force' || '' }}
 
       - name: Persist state
         run: |
