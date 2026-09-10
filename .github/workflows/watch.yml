@@ -39,6 +39,7 @@ jobs:
         continue-on-error: true
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PYTHONUNBUFFERED: "1"  # keep stdout/stderr interleaved in the CI log
           # Repo variable. Set to 1 to alert on every new post; unset or 0 to
           # use keywords.txt. Toggle it in Settings without touching the code.
           ALERT_ALL: ${{ vars.ALERT_ALL }}

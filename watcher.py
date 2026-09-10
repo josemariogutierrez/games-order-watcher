@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 import urllib.error
 import urllib.request
@@ -40,6 +41,11 @@ ACTIVE_START = (10, 30)
 ACTIVE_END = (21, 30)
 
 SEEN_LIMIT = 500  # keep the state file small
+RETRY_BACKOFF = 3  # seconds, multiplied by attempt number
+
+# Presence of this marker means Facebook served the real feed rather than a
+# login wall or an error page.
+PAGE_JSON_MARKER = '<script type="application/json"'
 FAILURE_ALERT_THRESHOLD = 3  # consecutive bad polls before crying for help
 
 # The store edits posts in place to mark stock state. If a post is already
@@ -75,7 +81,7 @@ def ascii_header(text: str, limit: int = 90) -> str:
 # --------------------------------------------------------------------------
 
 
-def fetch_page(url: str = PAGE_URL, timeout: int = 30) -> str:
+def _fetch_once(url: str, timeout: int) -> tuple[int, str]:
     request = urllib.request.Request(
         url,
         headers={
@@ -85,7 +91,36 @@ def fetch_page(url: str = PAGE_URL, timeout: int = 30) -> str:
         },
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", errors="replace")
+        return response.status, response.read().decode("utf-8", errors="replace")
+
+
+def fetch_page(url: str = PAGE_URL, timeout: int = 30, attempts: int = 3) -> str:
+    """Fetch the page, retrying when Facebook serves a body without posts.
+
+    Facebook intermittently answers 200 with a login wall or an error page
+    instead of the feed, especially from datacenter IPs. That is indistinguishable
+    from a parse failure unless we look, so log what came back and retry.
+    """
+    last_html = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            status, html = _fetch_once(url, timeout)
+            if PAGE_JSON_MARKER in html:
+                if attempt > 1:
+                    print(f"  fetch recovered on attempt {attempt}")
+                return html
+            title = re.search(r"<title[^>]*>([^<]*)</title>", html)
+            print(f"  ! attempt {attempt}: HTTP {status}, {len(html)} bytes, "
+                  f"no post JSON (title={title.group(1).strip() if title else '?'!r})",
+                  file=sys.stderr)
+            last_html = html
+        except urllib.error.HTTPError as exc:
+            print(f"  ! attempt {attempt}: HTTP {exc.code}", file=sys.stderr)
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            print(f"  ! attempt {attempt}: {exc}", file=sys.stderr)
+        if attempt < attempts:
+            time.sleep(RETRY_BACKOFF * attempt)
+    return last_html
 
 
 def _walk(node, out, creation_time=None):
