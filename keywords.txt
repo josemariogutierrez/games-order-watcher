@@ -1,0 +1,41 @@
+# One keyword per line. Case- and accent-insensitive, so "pokemon" matches
+# "Pokémon" and "POKEMON". Matching is substring-based: "zelda" matches
+# "The Legend of Zelda". Lines starting with # are ignored.
+#
+# For anything fancier, prefix with "re:" to write a raw regex, e.g.
+#   re:final fantasy (vii|16|xvi)
+# Regexes are matched against the accent-stripped, lowercased post text.
+
+zelda
+pokemon
+resident evil
+
+# --- suggestions, uncomment what you want ---
+# metroid
+# mario
+# silksong
+# hollow knight
+# final fantasy
+# elden ring
+# monster hunter
+# kirby
+# donkey kong
+# xenoblade
+# fire emblem
+# persona
+# yakuza
+# like a dragon
+# castlevania
+# metal gear
+# silent hill
+# dragon quest
+# animal crossing
+# splatoon
+# smash bros
+
+# --- store events rather than titles ---
+# Smile Games tags posts consistently; these catch every drop of a kind.
+# re:#\s*preventa
+# re:#\s*reserva
+# re:#\s*lanzamientomundial
+# re:#\s*hotprice
