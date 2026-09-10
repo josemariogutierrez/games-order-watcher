@@ -218,11 +218,31 @@ def ntfy_send(topic: str, title: str, body: str, click: str | None,
         response.read()
 
 
+def humanize_age(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "hace menos de 1 min"
+    if minutes < 60:
+        return f"hace {minutes} min"
+    hours = minutes // 60
+    if hours < 24:
+        return f"hace {hours} h {minutes % 60} min"
+    return f"hace {hours // 24} d"
+
+
 def notify_post(topic: str, post: dict, matched: list[str], dry_run: bool) -> None:
     already_gone = bool(SOLD_OUT_RE.search(post["text"]))
     snippet = " ".join(post["text"].split())[:400]
     title = f"{'[YA CERRADO] ' if already_gone else ''}Game drop: {', '.join(matched)}"
-    body = f"**{', '.join(matched)}**\n\n{snippet}\n\n{post['url']}"
+
+    # End-to-end lag, so you can see whether alerts are actually arriving fast.
+    # This is cache lag plus cron lag combined - the number that really matters.
+    age = ""
+    if post.get("created"):
+        delta = datetime.now(timezone.utc).timestamp() - post["created"]
+        age = f" · publicado {humanize_age(delta)}"
+
+    body = f"**{', '.join(matched)}**{age}\n\n{snippet}\n\n{post['url']}"
     if already_gone:
         body = "_Este post ya aparece marcado como agotado/cerrado._\n\n" + body
     ntfy_send(
@@ -318,7 +338,10 @@ def main() -> int:
         if not matched:
             continue
         preview = " ".join(post["text"].split())[:70]
-        print(f"    MATCH {matched} {post['id']} {preview!r}")
+        lag = ""
+        if post.get("created"):
+            lag = f" lag={int((now_bogota.timestamp() - post['created']) // 60)}min"
+        print(f"    MATCH {matched}{lag} {post['id']} {preview!r}")
         try:
             notify_post(topic, post, matched, args.dry_run)
             alerted += 1

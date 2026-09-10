@@ -105,9 +105,16 @@ consecutive polls that return nothing, so it fails loudly rather than silently
 going quiet. If that happens, the fallback is a real browser session via
 Playwright with saved cookies.
 
-**Feed freshness is unverified.** The crawler-facing view may be cached rather
-than live. If alerts consistently arrive later than the Facebook app's own
-notifications, that cache is the reason, and no polling interval will fix it.
+**Feed freshness is partly verified.** On 2026-09-10 the crawler-facing view
+showed the same newest post as the Facebook app, so it isn't serving a stale
+cache. What that check *can't* tell us is whether the view lags by seconds or
+by minutes, since both sides were idle.
+
+Every alert therefore carries its own age (`publicado hace 7 min`), and CI logs
+print `lag=Nmin`. That number is cache lag plus cron lag combined — the one that
+actually matters. Watch the first few real alerts: consistently under ~10 min is
+working as intended; consistently higher points at GitHub's cron scheduler, and
+the fix is an always-on VPS with real cron.
 
 **Scheduled workflows auto-disable after 60 days of repo inactivity.** State
 commits count as activity, so as long as the page posts occasionally this stays
