@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Poll the Smile Games Facebook page and push ntfy alerts for keyword matches.
+"""Poll a game store's Facebook page and push ntfy alerts for keyword matches.
 
 Reads the public page, parses the embedded JSON feed, and notifies about posts
 that are new to us and mention a keyword from keywords.txt.
@@ -41,7 +41,7 @@ ACTIVE_END = (21, 30)
 SEEN_LIMIT = 500  # keep the state file small
 FAILURE_ALERT_THRESHOLD = 3  # consecutive bad polls before crying for help
 
-# Smile Games edits posts in place to mark stock state. If a post is already
+# The store edits posts in place to mark stock state. If a post is already
 # marked when we first see it, we were too slow.
 SOLD_OUT_RE = re.compile(
     r"\(\s*(agotad|reserva cerrada|vendid|sold out)", re.IGNORECASE
@@ -66,7 +66,7 @@ def ascii_header(text: str, limit: int = 90) -> str:
     cleaned = "".join(c for c in cleaned if not unicodedata.combining(c))
     cleaned = cleaned.encode("ascii", "ignore").decode("ascii")
     cleaned = " ".join(cleaned.split())
-    return cleaned[:limit] or "Smile Games"
+    return cleaned[:limit] or "Game drop"
 
 
 # --------------------------------------------------------------------------
@@ -221,7 +221,7 @@ def ntfy_send(topic: str, title: str, body: str, click: str | None,
 def notify_post(topic: str, post: dict, matched: list[str], dry_run: bool) -> None:
     already_gone = bool(SOLD_OUT_RE.search(post["text"]))
     snippet = " ".join(post["text"].split())[:400]
-    title = f"{'[YA CERRADO] ' if already_gone else ''}Smile Games: {', '.join(matched)}"
+    title = f"{'[YA CERRADO] ' if already_gone else ''}Game drop: {', '.join(matched)}"
     body = f"**{', '.join(matched)}**\n\n{snippet}\n\n{post['url']}"
     if already_gone:
         body = "_Este post ya aparece marcado como agotado/cerrado._\n\n" + body
@@ -287,7 +287,7 @@ def main() -> int:
         if state["consecutive_failures"] == FAILURE_ALERT_THRESHOLD:
             ntfy_send(
                 topic,
-                "Smile Games watcher is broken",
+                "Game watcher is broken",
                 f"{FAILURE_ALERT_THRESHOLD} consecutive polls returned no posts. "
                 "Facebook may have changed the page or blocked the request.\n\n"
                 "Check the GitHub Actions logs.",

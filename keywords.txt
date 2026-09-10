@@ -34,7 +34,7 @@ resident evil
 # smash bros
 
 # --- store events rather than titles ---
-# Smile Games tags posts consistently; these catch every drop of a kind.
+# The store tags posts consistently; these catch every drop of a kind.
 # re:#\s*preventa
 # re:#\s*reserva
 # re:#\s*lanzamientomundial

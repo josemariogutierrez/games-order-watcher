@@ -1,4 +1,4 @@
-name: Watch Smile Games
+name: Watch game store
 
 on:
   schedule:
@@ -17,7 +17,7 @@ on:
 # watcher.py trims the edges to exactly 10:30-21:30 Bogota.
 
 concurrency:
-  group: watch-smile-games
+  group: watch-game-store
   cancel-in-progress: false
 
 permissions:

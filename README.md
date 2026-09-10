@@ -1,8 +1,9 @@
-# Smile Games watcher
+# Games order watcher
 
-Polls the [Smile Games](https://www.facebook.com/SmileGamesBta/) Facebook page
-every 5 minutes and pushes an [ntfy](https://ntfy.sh) notification to your phone
-when a new post mentions one of your keywords.
+Polls a game store's public Facebook page every 5 minutes and pushes an
+[ntfy](https://ntfy.sh) notification to your phone when a new post mentions one
+of your keywords. Built for catching pre-orders and launch-day drops before
+they sell out.
 
 No Facebook account or login is involved.
 
@@ -16,7 +17,7 @@ posts out of the JSON embedded in the HTML (`post_id`, message text,
 Anything new that matches `keywords.txt` becomes a notification with the post
 text and a direct link. Everything else is silently recorded as seen.
 
-Smile Games edits posts in place to mark stock state — `(Agotados)`,
+The store edits posts in place to mark stock state — `(Agotados)`,
 `(Reserva cerrada)`, `(Últimas 2 unidades)`. If a post is *already* marked when
 the watcher first sees it, the alert is downgraded and titled `[YA CERRADO]`,
 so you can tell at a glance that you were too slow. A run of those means the
@@ -28,16 +29,15 @@ polling interval needs tightening.
 can read your alerts. Use something unguessable:
 
 ```sh
-echo "smilegames-$(openssl rand -hex 8)"
+python3 -c "import secrets; print('games-'+secrets.token_hex(8))"
 ```
 
 **2. Subscribe on your phone.** Install ntfy ([iOS](https://apps.apple.com/app/ntfy/id1625396347),
 [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)),
 tap **+**, and enter that topic name. Leave the server as `ntfy.sh`.
 
-**3. Push this to GitHub, and make the repo public.** This matters more than it
-looks. GitHub bills private-repo Actions **rounded up to the nearest minute per
-job**, so a 20-second run costs a full minute:
+**3. Keep the repo public.** GitHub bills private-repo Actions **rounded up to
+the nearest minute per job**, so a 20-second run costs a full minute:
 
 | | runs/day | billed min/month | Free tier (2,000) |
 |---|---|---|---|
@@ -46,23 +46,22 @@ job**, so a 20-second run costs a full minute:
 | **Public, every 5 min** | 144 | unlimited | **free** |
 
 Public repos get unlimited Actions minutes, so the 5-minute schedule is only
-free on a public repo. Nothing here is sensitive — the ntfy topic lives in a
-repo secret, and secrets are never exposed to forks or pull requests. The
-tradeoff is that your Actions logs (post text, which keywords matched) become
-publicly readable.
+free on a public repo. The ntfy topic lives in a repo secret, and secrets are
+never exposed to forks or pull requests. The tradeoff is that Actions logs
+(post text, which keywords matched) are publicly readable.
 
-If you'd rather keep it private, change the cron in `.github/workflows/watch.yml`
-from `*/5` to `*/15` to stay inside the free tier.
+To go private instead, change the cron in `.github/workflows/watch.yml` from
+`*/5` to `*/15` to stay inside the free tier.
 
 **4. Add the secret.** Repo → Settings → Secrets and variables → Actions → New
 repository secret, named `NTFY_TOPIC`, set to your topic string.
 
 **5. Prime it — only if the committed state is stale.** `state/seen.json` ships
-already primed with the 20 posts visible on 2026-09-10, so if you set this up
-now you'll get no backlog. If it's been a while, re-prime first: Actions →
-*Watch Smile Games* → Run workflow → check **prime** → Run. That marks
-everything currently visible as seen without alerting, so you only hear about
-genuinely new posts.
+already primed with the 20 posts visible on 2026-09-10, so setting this up now
+gives you no backlog. If it's been a while, re-prime first: Actions →
+*Watch game store* → Run workflow → check **prime** → Run. That marks everything
+currently visible as seen without alerting, so you only hear about genuinely
+new posts.
 
 ## Editing keywords
 
@@ -75,6 +74,11 @@ commented list of other suggestions and the store's own hashtags
 (`#Reserva`, `#LanzamientoMundial`, `#HotPrice`) if you'd rather catch every
 drop of a kind than specific titles.
 
+## Watching a different page
+
+Change `PAGE_SLUG` at the top of `watcher.py` to the page's Facebook slug, then
+run `python3 watcher.py --prime` to reset the state.
+
 ## Local use
 
 ```sh
@@ -83,7 +87,8 @@ python3 watcher.py --prime             # mark current posts seen, alert nothing
 python3 watcher.py --force             # real run, ignoring the hours window
 ```
 
-`--force` bypasses the 10:30–21:30 Bogotá window. No dependencies; stdlib only.
+`--force` bypasses the 10:30–21:30 Bogotá window. Dry runs never write state,
+so testing won't suppress a real alert. No dependencies; stdlib only.
 
 ## Known limitations
 
@@ -93,12 +98,12 @@ The 5-minute schedule is a ceiling, not a guarantee. If the `[YA CERRADO]`
 alerts pile up, move this to a small always-on VPS where cron is exact.
 
 **The crawler-UA access path is unofficial.** It sends a user-agent we aren't,
-which is a Facebook ToS gray area. Nothing is tied to your account, so the
+which is a Facebook ToS gray area. Nothing is tied to any account, so the
 personal risk is nil, but Meta could start verifying crawler IPs and break it
-without notice. The watcher alerts you (`Smile Games watcher is broken`) after
-3 consecutive polls that return nothing, so it fails loudly rather than
-silently going quiet. If that happens, the fallback is a real browser session
-via Playwright with saved cookies.
+without notice. The watcher alerts you (`Game watcher is broken`) after 3
+consecutive polls that return nothing, so it fails loudly rather than silently
+going quiet. If that happens, the fallback is a real browser session via
+Playwright with saved cookies.
 
 **Feed freshness is unverified.** The crawler-facing view may be cached rather
 than live. If alerts consistently arrive later than the Facebook app's own
