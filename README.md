@@ -35,10 +35,24 @@ echo "smilegames-$(openssl rand -hex 8)"
 [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)),
 tap **+**, and enter that topic name. Leave the server as `ntfy.sh`.
 
-**3. Push this to GitHub.** A **public** repo is recommended — Actions minutes
-are unlimited for public repos, while this schedule would use roughly 1,400 of
-a private repo's 2,000 free monthly minutes. Nothing here is sensitive; the
-topic name is stored as a secret, not in the code.
+**3. Push this to GitHub, and make the repo public.** This matters more than it
+looks. GitHub bills private-repo Actions **rounded up to the nearest minute per
+job**, so a 20-second run costs a full minute:
+
+| | runs/day | billed min/month | Free tier (2,000) |
+|---|---|---|---|
+| Private, every 5 min | 144 | ~4,320 | **over by ~2,320 (~$18/mo)** |
+| Private, every 15 min | 48 | ~1,440 | fits |
+| **Public, every 5 min** | 144 | unlimited | **free** |
+
+Public repos get unlimited Actions minutes, so the 5-minute schedule is only
+free on a public repo. Nothing here is sensitive — the ntfy topic lives in a
+repo secret, and secrets are never exposed to forks or pull requests. The
+tradeoff is that your Actions logs (post text, which keywords matched) become
+publicly readable.
+
+If you'd rather keep it private, change the cron in `.github/workflows/watch.yml`
+from `*/5` to `*/15` to stay inside the free tier.
 
 **4. Add the secret.** Repo → Settings → Secrets and variables → Actions → New
 repository secret, named `NTFY_TOPIC`, set to your topic string.
