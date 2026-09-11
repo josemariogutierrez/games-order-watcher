@@ -41,12 +41,10 @@ ACTIVE_START = (10, 30)
 ACTIVE_END = (21, 30)
 
 SEEN_LIMIT = 500  # keep the state file small
-RETRY_BACKOFF = 3  # seconds, multiplied by attempt number
+FETCH_ATTEMPTS = 4  # a block often clears on a later try
+RETRY_BACKOFF = 5  # seconds, multiplied by attempt number
 
-# Presence of this marker means Facebook served the real feed rather than a
-# login wall or an error page.
-PAGE_JSON_MARKER = '<script type="application/json"'
-FAILURE_ALERT_THRESHOLD = 3  # consecutive bad polls before crying for help
+FAILURE_ALERT_THRESHOLD = 5  # consecutive bad polls before crying for help
 
 # The store edits posts in place to mark stock state. If a post is already
 # marked when we first see it, we were too slow.
@@ -94,33 +92,37 @@ def _fetch_once(url: str, timeout: int) -> tuple[int, str]:
         return response.status, response.read().decode("utf-8", errors="replace")
 
 
-def fetch_page(url: str = PAGE_URL, timeout: int = 30, attempts: int = 3) -> str:
-    """Fetch the page, retrying when Facebook serves a body without posts.
+def fetch_posts(url: str = PAGE_URL, timeout: int = 30,
+                attempts: int = FETCH_ATTEMPTS) -> list[dict]:
+    """Fetch and parse, retrying until posts actually come back.
 
-    Facebook intermittently answers 200 with a login wall or an error page
-    instead of the feed, especially from datacenter IPs. That is indistinguishable
-    from a parse failure unless we look, so log what came back and retry.
+    Facebook intermittently answers 200 with a login wall instead of the feed,
+    especially from datacenter IPs. The wall still contains
+    `<script type="application/json">` blocks, so the only trustworthy signal
+    that we got the real page is having parsed at least one post. Retrying on
+    anything weaker silently accepts the wall.
     """
-    last_html = ""
     for attempt in range(1, attempts + 1):
+        status, size, note = 0, 0, ""
         try:
             status, html = _fetch_once(url, timeout)
-            if PAGE_JSON_MARKER in html:
+            size = len(html)
+            posts = parse_posts(html)
+            if posts:
                 if attempt > 1:
                     print(f"  fetch recovered on attempt {attempt}")
-                return html
+                return posts
             title = re.search(r"<title[^>]*>([^<]*)</title>", html)
-            print(f"  ! attempt {attempt}: HTTP {status}, {len(html)} bytes, "
-                  f"no post JSON (title={title.group(1).strip() if title else '?'!r})",
-                  file=sys.stderr)
-            last_html = html
+            note = f"0 posts parsed (title={title.group(1).strip() if title else '?'!r})"
         except urllib.error.HTTPError as exc:
-            print(f"  ! attempt {attempt}: HTTP {exc.code}", file=sys.stderr)
+            note = f"HTTP error {exc.code}"
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            print(f"  ! attempt {attempt}: {exc}", file=sys.stderr)
+            note = f"{type(exc).__name__}: {exc}"
+        print(f"  ! attempt {attempt}/{attempts}: HTTP {status}, {size} bytes, {note}",
+              file=sys.stderr)
         if attempt < attempts:
             time.sleep(RETRY_BACKOFF * attempt)
-    return last_html
+    return []
 
 
 def _walk(node, out, creation_time=None):
@@ -390,11 +392,7 @@ def main() -> int:
         # this exercises the actual title, priority, link and formatting rather
         # than a dummy string. State is never touched.
         print("Sending a test notification...")
-        try:
-            posts = parse_posts(fetch_page())
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            print(f"  ! fetch failed: {exc}", file=sys.stderr)
-            posts = []
+        posts = fetch_posts()
         if posts:
             post = posts[0]
             matched = match_keywords(post, keywords) or ["prueba"]
@@ -414,12 +412,7 @@ def main() -> int:
     print(f"{now_bogota:%Y-%m-%d %H:%M} Bogota | {mode} | "
           f"{len(state['seen'])} posts already seen")
 
-    try:
-        html = fetch_page()
-        posts = parse_posts(html)
-    except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        posts = []
-        print(f"  ! fetch failed: {exc}", file=sys.stderr)
+    posts = fetch_posts()
 
     if not posts:
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
@@ -429,9 +422,11 @@ def main() -> int:
             send_alert(
                 "Game watcher is broken",
                 "watcher caido",
-                f"{FAILURE_ALERT_THRESHOLD} consecutive polls returned no posts. "
-                "Facebook may have changed the page or blocked the request. "
-                "Check the GitHub Actions logs.",
+                f"{FAILURE_ALERT_THRESHOLD} polls in a row could not READ the page "
+                "(0 posts parsed, after retries). This is not 'they haven't "
+                "posted' - it means Facebook served a login wall or changed the "
+                "page. Check the GitHub Actions logs. It clears itself if the "
+                "block was temporary.",
                 None, "high", "rotating_light", args.dry_run,
             )
         if not args.dry_run:
