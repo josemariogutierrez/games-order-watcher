@@ -2,11 +2,13 @@ name: Watch game store
 
 on:
   schedule:
-    # GitHub cron is UTC. Bogota is UTC-5 year round (no DST).
-    # 15:00-23:59 UTC = 10:00-18:59 Bogota
-    - cron: "*/5 15-23 * * *"
-    # 00:00-02:59 UTC = 19:00-21:59 Bogota (previous day)
-    - cron: "*/5 0-2 * * *"
+    # GitHub silently drops most high-frequency cron triggers, so we do NOT
+    # schedule every 5 minutes. Instead a few starts a day each launch a job
+    # that polls every 5 minutes internally until the window closes. Bogota is
+    # UTC-5 year round.
+    - cron: "30 15 * * *"   # 10:30 Bogota - window opens
+    - cron: "0 18 * * *"    # 13:00 Bogota - relaunch / catch a dropped start
+    - cron: "0 21 * * *"    # 16:00 Bogota - covers the evening
   workflow_dispatch:
     inputs:
       prime:
@@ -17,9 +19,13 @@ on:
         description: "Send one test notification (changes nothing)"
         type: boolean
         default: false
+      loop:
+        description: "Run the polling loop (uncheck for a single poll)"
+        type: boolean
+        default: true
 
-# watcher.py trims the edges to exactly 10:30-21:30 Bogota.
-
+# A queued run starts when the current one ends, which extends coverage rather
+# than piling up: a job launched after the window closes exits within seconds.
 concurrency:
   group: watch-game-store
   cancel-in-progress: false
@@ -27,56 +33,77 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  POLL_SECONDS: 300
+  MAX_MINUTES: 300        # stay well under the 6h job ceiling
+  WINDOW_START: "10:30"   # Bogota
+  WINDOW_END: "21:30"     # Bogota
+
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 
-      - name: Poll the page
-        id: watch
-        continue-on-error: true
+      - name: Single poll
+        if: inputs.test || inputs.prime || inputs.loop == false
         env:
-          # Telegram takes priority when both are set; ntfy stays as a fallback.
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          PYTHONUNBUFFERED: "1"  # keep stdout/stderr interleaved in the CI log
-          # Repo variable. Set to 1 to alert on every new post; unset or 0 to
-          # use keywords.txt. Toggle it in Settings without touching the code.
           ALERT_ALL: ${{ vars.ALERT_ALL }}
+          PYTHONUNBUFFERED: "1"
         run: |
           python3 watcher.py \
             ${{ inputs.test && '--test' || '' }} \
             ${{ inputs.prime && '--prime --force' || '' }}
 
-      - name: Persist state
+      - name: Polling loop
+        if: ${{ !(inputs.test || inputs.prime || inputs.loop == false) }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          ALERT_ALL: ${{ vars.ALERT_ALL }}
+          PYTHONUNBUFFERED: "1"
         run: |
-          # Only commit when the seen-posts map or the failure counter actually
-          # changed. last_success updates every run, and committing that alone
-          # would add ~140 commits a day for no reason.
-          real_change=$(git diff -U0 -- state/seen.json \
-            | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
-            | grep -v '"last_success"' || true)
-          if [ -z "$real_change" ]; then
-            echo "No meaningful state change."
-            exit 0
-          fi
+          set -uo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/seen.json
-          git commit -m "state: update seen posts [skip ci]"
-          # Another run may have pushed while we were working.
-          for i in 1 2 3; do
-            git pull --rebase --autostash && git push && exit 0
-            echo "push attempt $i failed, retrying"
-            sleep 5
-          done
-          exit 1
 
-      - name: Surface poll failure
-        if: steps.watch.outcome == 'failure'
-        run: |
-          echo "::error::watcher.py failed - see the 'Poll the page' step"
-          exit 1
+          start_window=$(TZ=America/Bogota date -d "today ${WINDOW_START}" +%s)
+          end_window=$(TZ=America/Bogota date -d "today ${WINDOW_END}" +%s)
+          if [ "$(date +%s)" -lt "$start_window" ]; then
+            echo "Before the window opens; nothing to do."; exit 0
+          fi
+          end_max=$(( $(date +%s) + MAX_MINUTES * 60 ))
+          echo "Looping every ${POLL_SECONDS}s until $(date -d @${end_window} -u +%H:%M) UTC"
+
+          i=0
+          while :; do
+            now=$(date +%s)
+            [ "$now" -ge "$end_window" ] && { echo "Window closed."; break; }
+            [ "$now" -ge "$end_max" ]    && { echo "Max job duration reached."; break; }
+
+            i=$((i + 1))
+            echo "--- poll #${i} $(TZ=America/Bogota date +%H:%M:%S) Bogota"
+            python3 watcher.py || echo "  (poll reported a problem, continuing)"
+
+            # Commit only when the seen map or failure counter changed;
+            # last_success alone would mean a commit every 5 minutes.
+            changed=$(git diff -U0 -- state/seen.json \
+              | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
+              | grep -v '"last_success"' || true)
+            if [ -n "$changed" ]; then
+              git add state/seen.json
+              git commit -q -m "state: update seen posts [skip ci]"
+              git pull -q --rebase --autostash origin main && git push -q origin main \
+                && echo "  state pushed" || echo "  state push failed, will retry next poll"
+            fi
+
+            remaining=$(( end_window - $(date +%s) ))
+            [ "$remaining" -le 0 ] && break
+            sleep $(( remaining < POLL_SECONDS ? remaining : POLL_SECONDS ))
+          done
+          echo "Loop finished after ${i} poll(s)."
