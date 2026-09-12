@@ -41,10 +41,17 @@ ACTIVE_START = (10, 30)
 ACTIVE_END = (21, 30)
 
 SEEN_LIMIT = 500  # keep the state file small
-FETCH_ATTEMPTS = 4  # a block often clears on a later try
+# Facebook's blocks are IP-based and last ~40-85 min, so retrying within one
+# poll cannot outlast one. Keep attempts low: they only help against a genuinely
+# transient single-request failure.
+FETCH_ATTEMPTS = 2
 RETRY_BACKOFF = 5  # seconds, multiplied by attempt number
 
-FAILURE_ALERT_THRESHOLD = 5  # consecutive bad polls before crying for help
+# Blocks of under an hour are normal and self-clearing, so alerting on a count
+# of consecutive failures just cries wolf. Alert only when the page has been
+# unreadable for this long, which means something actually changed.
+BLIND_ALERT_HOURS = 3
+
 
 # The store edits posts in place to mark stock state. If a post is already
 # marked when we first see it, we were too slow.
@@ -416,17 +423,22 @@ def main() -> int:
 
     if not posts:
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-        print(f"  ! no posts parsed (failure #{state['consecutive_failures']})",
-              file=sys.stderr)
-        if state["consecutive_failures"] == FAILURE_ALERT_THRESHOLD:
+        blind_since = state.get("blind_since") or now_bogota.isoformat(timespec="seconds")
+        state["blind_since"] = blind_since
+        blind_hours = (now_bogota - datetime.fromisoformat(blind_since)).total_seconds() / 3600
+        print(f"  ! could not read the page (failure #{state['consecutive_failures']}, "
+              f"blind for {blind_hours:.1f}h)", file=sys.stderr)
+
+        # One alert per blind spell, not one per poll.
+        if blind_hours >= BLIND_ALERT_HOURS and not state.get("blind_alerted"):
+            state["blind_alerted"] = True
             send_alert(
-                "Game watcher is broken",
-                "watcher caido",
-                f"{FAILURE_ALERT_THRESHOLD} polls in a row could not READ the page "
-                "(0 posts parsed, after retries). This is not 'they haven't "
-                "posted' - it means Facebook served a login wall or changed the "
-                "page. Check the GitHub Actions logs. It clears itself if the "
-                "block was temporary.",
+                "Game watcher cannot read the page",
+                f"sin leer la pagina hace {blind_hours:.0f}h",
+                f"The page has been unreadable for over {BLIND_ALERT_HOURS}h "
+                "(Facebook is serving a login wall instead of the feed). Short "
+                "blocks are normal and clear themselves; this one has not. "
+                "Check the GitHub Actions logs.",
                 None, "high", "rotating_light", args.dry_run,
             )
         if not args.dry_run:
@@ -437,8 +449,15 @@ def main() -> int:
           f"{datetime.fromtimestamp(posts[0]['created'] or 0, timezone.utc):%Y-%m-%d %H:%M} UTC")
 
     if state.get("consecutive_failures"):
-        print("  recovered from previous failures")
+        blind = state.get("blind_since")
+        if blind:
+            mins = (now_bogota - datetime.fromisoformat(blind)).total_seconds() / 60
+            print(f"  recovered after {mins:.0f} min blind")
+        else:
+            print("  recovered from previous failures")
     state["consecutive_failures"] = 0
+    state["blind_since"] = None
+    state["blind_alerted"] = False
     state["last_success"] = now_bogota.isoformat(timespec="seconds")
 
     stamp = now_bogota.isoformat(timespec="seconds")
