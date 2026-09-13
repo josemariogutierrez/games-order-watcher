@@ -2,13 +2,16 @@ name: Watch game store
 
 on:
   schedule:
-    # GitHub silently drops most high-frequency cron triggers, so we do NOT
-    # schedule every 5 minutes. Instead a few starts a day each launch a job
-    # that polls every 5 minutes internally until the window closes. Bogota is
-    # UTC-5 year round.
-    - cron: "30 15 * * *"   # 10:30 Bogota - window opens
-    - cron: "0 18 * * *"    # 13:00 Bogota - relaunch / catch a dropped start
-    - cron: "0 21 * * *"    # 16:00 Bogota - covers the evening
+    # GitHub delays scheduled starts heavily - measured 137-229 min late on the
+    # day's first trigger, which left the window uncovered and made one post
+    # arrive 151 min late. Mitigations: odd minutes (:07/:27/:47 are far less
+    # congested than :00 and :30), and many start attempts so a dropped or
+    # delayed one is covered by the next. Concurrency keeps at most one job
+    # running plus one pending, and a job that starts outside the window exits
+    # in seconds, so the extra triggers are cheap.
+    # 15:00-02:59 UTC spans the 10:30-21:30 Bogota window (UTC-5).
+    - cron: "7,27,47 15-23 * * *"
+    - cron: "7,27,47 0-2 * * *"
   workflow_dispatch:
     inputs:
       prime:
