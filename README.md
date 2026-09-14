@@ -173,3 +173,43 @@ the fix is an always-on VPS with real cron.
 **Scheduled workflows auto-disable after 60 days of repo inactivity.** State
 commits count as activity, so as long as the page posts occasionally this stays
 alive on its own.
+
+## Running on a Mac (primary) with GitHub as backup
+
+Facebook blocks GitHub's datacenter IPs — measured at 52% of polls, with one
+17-hour spell — and GitHub delays the day's first scheduled start by 2–4 hours.
+A home IP is not blocked and `launchd` fires on time, so the Mac runs as the
+primary watcher and GitHub stays on to cover the hours the Mac is asleep.
+
+Both share `state/seen.json` through git, and both pull before polling, so
+whichever sees a post first records it and the other stays quiet.
+
+### Install
+
+```sh
+cp com.josemariogutierrez.gameswatcher.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.josemariogutierrez.gameswatcher.plist
+```
+
+Secrets live in a gitignored `.env` beside `watcher.py`:
+
+```sh
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+ALERT_ALL=1
+```
+
+`chmod 600 .env`. The plist runs `run-local.sh` every 5 minutes; `watcher.py`
+exits immediately outside the 10:30–21:30 Bogotá window, so no calendar rules
+are needed. After sleep, launchd runs the missed job once on wake.
+
+### Managing it
+
+```sh
+tail -f ~/Library/Logs/games-watcher.log                  # watch it work
+launchctl print gui/$(id -u)/com.josemariogutierrez.gameswatcher | grep -E 'state|runs|exit'
+launchctl kickstart -k gui/$(id -u)/com.josemariogutierrez.gameswatcher   # run now
+launchctl bootout gui/$(id -u)/com.josemariogutierrez.gameswatcher        # stop
+```
+
+The plist embeds absolute paths, so moving the repo means regenerating it.
