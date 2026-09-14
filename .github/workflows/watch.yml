@@ -98,11 +98,12 @@ jobs:
               || echo "  (pull failed, using local state)"
             python3 watcher.py || echo "  (poll reported a problem, continuing)"
 
-            # Commit only when the seen map or failure counter changed;
-            # last_success alone would mean a commit every 5 minutes.
+            # Commit only when the seen-posts map changed. Failure and blind
+            # counters are per-machine bookkeeping - committing them produced a
+            # commit every 5 min through every blind spell.
             changed=$(git diff -U0 -- state/seen.json \
               | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
-              | grep -v '"last_success"' || true)
+              | grep -vE '"last_success"|"consecutive_failures"|"blind_since"|"blind_alerted"' || true)
             if [ -n "$changed" ]; then
               git add state/seen.json
               git commit -q -m "state: update seen posts [skip ci]"

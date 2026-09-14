@@ -31,7 +31,7 @@ rc=$?
 # produce a commit every 5 minutes.
 changed=$(git diff -U0 -- state/seen.json \
   | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' \
-  | grep -v '"last_success"' || true)
+  | grep -vE '"last_success"|"consecutive_failures"|"blind_since"|"blind_alerted"' || true)
 
 if [ -n "$changed" ]; then
   git add state/seen.json
