@@ -1,197 +1,137 @@
 # Games order watcher
 
-Polls a game store's public Facebook page every 5 minutes and pushes an
-[ntfy](https://ntfy.sh) notification to your phone when a new post mentions one
-of your keywords. Built for catching pre-orders and launch-day drops before
-they sell out.
+Watches a game store's public Facebook page and sends a Telegram message when a
+new post appears, so pre-orders and launch-day drops don't get missed while
+Facebook's own notifications lag.
 
 No Facebook account or login is involved.
 
+---
+
+## Daily use
+
+Everything below runs from the repo directory.
+
+```sh
+./status.sh                 # is it running? when did it last poll?
+tail -f ~/Library/Logs/games-watcher.log     # live feed
+```
+
+### Start / stop the local watcher
+
+```sh
+# stop (survives reboots, so this is the real off switch)
+launchctl bootout gui/$(id -u)/com.josemariogutierrez.gameswatcher
+
+# start again
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.josemariogutierrez.gameswatcher.plist
+
+# poll right now without waiting for the next 5-minute tick
+launchctl kickstart -k gui/$(id -u)/com.josemariogutierrez.gameswatcher
+
+# is it loaded?
+launchctl list | grep gameswatcher
+```
+
+`launchctl print gui/$(id -u)/com.josemariogutierrez.gameswatcher` shows detail.
+Note that `state = not running` there is **normal**: the job runs ~3 seconds
+every 5 minutes and is idle the rest of the time. Health is `runs` climbing and
+`last exit code = 0`.
+
+### Send a test notification
+
+```sh
+set -a && . ./.env && set +a && python3 watcher.py --test
+```
+
+Re-sends the newest real post through the normal alert path, so it exercises the
+true formatting. Touches no state. From a phone: GitHub → Actions → *Watch game
+store* → Run workflow → check **test**.
+
+### Resource use
+
+Measured, not estimated: **31 MB peak RAM for ~3 seconds per poll**, then the
+process exits — nothing persists between polls, so it cannot leak. The log grows
+~24 KB/day (~8 MB/year).
+
+---
+
 ## How it works
 
-Facebook returns HTTP 400 to ordinary anonymous clients, but serves the full
-page to crawler user-agents. `watcher.py` fetches the page that way, pulls the
-posts out of the JSON embedded in the HTML (`post_id`, message text,
-`creation_time`), and compares them against `state/seen.json`.
+Facebook returns HTTP 400 to ordinary anonymous clients but serves the full page
+to crawler user-agents. `watcher.py` fetches it that way, pulls posts out of the
+JSON embedded in the HTML (`post_id`, message text, `creation_time`), and
+compares them against `state/seen.json`.
 
-Anything new that matches `keywords.txt` becomes a notification with the post
-text and a direct link. Everything else is silently recorded as seen.
+Anything new that matches `keywords.txt` becomes a Telegram message with the post
+text, its age, and a direct link. Everything else is recorded silently.
 
 The store edits posts in place to mark stock state — `(Agotados)`,
-`(Reserva cerrada)`, `(Últimas 2 unidades)`. If a post is *already* marked when
-the watcher first sees it, the alert is downgraded and titled `[YA CERRADO]`,
-so you can tell at a glance that you were too slow. A run of those means the
-polling interval needs tightening.
+`(Reserva cerrada)`, `(Últimas 2 unidades)`. A post already marked when first
+seen is titled `[YA CERRADO]` and downgraded, so a run of those means detection
+is too slow.
 
-## Setup
+Python 3 standard library only — no dependencies, no install step.
 
-Pick a notification backend. If both are configured, Telegram wins.
+---
 
-### Telegram (recommended)
+## Why it runs in two places
 
-Message [@BotFather](https://t.me/BotFather) on Telegram, send `/newbot`, and
-follow the prompts. It replies with a token like `8123456789:AAF...`. Then open
-a chat with your new bot and send it any message — a bot cannot message you
-first, so this step is required.
+| | Mac (primary) | GitHub Actions (backup) |
+|---|---|---|
+| Polls | every 5 min via `launchd` | every 5 min inside a long-running job |
+| Facebook blocking | **0%** measured | **~52%** of polls, in 40–85 min stretches |
+| Timing | exact | start delayed 2–4h; one post arrived 151 min late |
+| Runs when Mac sleeps | no | yes |
 
-Add two repo secrets: `TELEGRAM_BOT_TOKEN` (the token) and `TELEGRAM_CHAT_ID`
-(your numeric chat id). To find the chat id after messaging the bot:
+Facebook blocks GitHub's datacenter IPs but not a residential one, so the Mac is
+the reliable watcher and GitHub covers the hours the Mac is asleep.
 
-```sh
-curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
-  | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][-1]['message']['chat']['id'])"
-```
+Both share `state/seen.json` through git and **both pull before polling**, so
+whichever sees a post first records it and the other stays quiet. Only the
+seen-posts map is shared; failure counters stay per-machine, since the Mac is not
+blind when GitHub is.
 
-Telegram is free with no message limits that matter here, and its iOS push is
-far more reliable than ntfy's — ntfy on iPhone depends on a third-party server
-holding your APNs device token, which is a common point of failure.
+GitHub attempts 36 starts a day at `:07/:27/:47` — deliberately odd minutes,
+since `:00` and `:30` are the most congested and were being delayed for hours.
+Each job then polls every 5 minutes internally until 21:30 Bogotá or 5 hours
+elapse, which is immune to cron drop once running.
 
-### ntfy (fallback)
+### A caveat about Mac sleep
 
-**1. Pick an ntfy topic.** It's a password, not a username — anyone who knows it
-can read your alerts. Use something unguessable:
-
-```sh
-python3 -c "import secrets; print('games-'+secrets.token_hex(8))"
-```
-
-**2. Subscribe on your phone.** Install ntfy ([iOS](https://apps.apple.com/app/ntfy/id1625396347),
-[Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)),
-tap **+**, and enter that topic name. Leave the server as `ntfy.sh`.
-
-**3. Keep the repo public.** GitHub bills private-repo Actions **rounded up to
-the nearest minute per job**, so a 20-second run costs a full minute:
-
-| | runs/day | billed min/month | Free tier (2,000) |
-|---|---|---|---|
-| Private, every 5 min | 144 | ~4,320 | **over by ~2,320 (~$18/mo)** |
-| Private, every 15 min | 48 | ~1,440 | fits |
-| **Public, every 5 min** | 144 | unlimited | **free** |
-
-Public repos get unlimited Actions minutes, so the 5-minute schedule is only
-free on a public repo. The ntfy topic lives in a repo secret, and secrets are
-never exposed to forks or pull requests. The tradeoff is that Actions logs
-(post text, which keywords matched) are publicly readable.
-
-To go private instead, change the cron in `.github/workflows/watch.yml` from
-`*/5` to `*/15` to stay inside the free tier.
-
-**4. Add the secret.** Repo → Settings → Secrets and variables → Actions → New
-repository secret, named `NTFY_TOPIC`, set to your topic string.
-
-**5. Prime it — only if the committed state is stale.** `state/seen.json` ships
-already primed with the 20 posts visible on 2026-09-10, so setting this up now
-gives you no backlog. If it's been a while, re-prime first: Actions →
-*Watch game store* → Run workflow → check **prime** → Run. That marks everything
-currently visible as seen without alerting, so you only hear about genuinely
-new posts.
-
-## Testing that notifications reach your phone
-
-Three ways, no state changed and nothing marked as seen by any of them:
+`launchd` cannot poll while the Mac is asleep, and this Mac sleeps after 1 minute
+idle, which already produced a 20-minute gap. To hold the window properly:
 
 ```sh
-NTFY_TOPIC=your-topic python3 watcher.py --test    # from your machine
+sudo pmset -c sleep 0     # only while plugged in; battery and display unaffected
 ```
 
-From GitHub (works from your phone via the GitHub app): Actions →
-*Watch game store* → Run workflow → check **test** → Run.
+---
 
-Or the raw one-liner, which tests only ntfy and not the watcher:
+## Configuration
 
-```sh
-curl -H "Title: Prueba" -H "Priority: high" -d "Test" ntfy.sh/your-topic
-```
+### Keywords
 
-`--test` re-sends the newest real post through the normal notification path, so
-it exercises the actual title, priority, link and formatting — not a dummy
-string.
+Edit `keywords.txt`. One per line, case- and accent-insensitive (`pokemon`
+matches `Pokémon`), substring-based (`zelda` matches `The Legend of Zelda`).
+Prefix with `re:` for a raw regex. Ships with `zelda`, `pokemon`,
+`resident evil` plus commented suggestions and the store's own hashtags
+(`#Reserva`, `#LanzamientoMundial`, `#HotPrice`).
 
-## Alerting on every post
+### Alert on every post
 
-Set the **`ALERT_ALL` repo variable** to `1` (Settings → Secrets and variables →
-Actions → *Variables*) to be notified about every new post regardless of
-keywords. Those alerts are labeled `post nuevo`; posts that *do* match a keyword
-still show the keyword.
+Currently **on**. It ignores keywords and alerts on everything, labeled
+`post nuevo`.
 
-Set it to `0` or delete it to go back to keyword-only. It's a variable rather
-than a code change, so flipping it takes no commit and no redeploy.
+- Mac: `ALERT_ALL=1` in `.env` — set to `0` for keyword-only
+- GitHub: the `ALERT_ALL` repo variable (Settings → Secrets and variables →
+  Actions → Variables)
 
-## Editing keywords
+Change both, or they'll disagree.
 
-Edit `keywords.txt` and push. One per line, case- and accent-insensitive, so
-`pokemon` matches `Pokémon`. Substring matching, so `zelda` matches
-`The Legend of Zelda`. Prefix a line with `re:` for a raw regex.
+### Secrets
 
-The file ships with `zelda`, `pokemon`, and `resident evil` active, plus a
-commented list of other suggestions and the store's own hashtags
-(`#Reserva`, `#LanzamientoMundial`, `#HotPrice`) if you'd rather catch every
-drop of a kind than specific titles.
-
-## Watching a different page
-
-Change `PAGE_SLUG` at the top of `watcher.py` to the page's Facebook slug, then
-run `python3 watcher.py --prime` to reset the state.
-
-## Local use
-
-```sh
-python3 watcher.py --dry-run --force   # print what it would send
-python3 watcher.py --prime             # mark current posts seen, alert nothing
-python3 watcher.py --force             # real run, ignoring the hours window
-```
-
-`--force` bypasses the 10:30–21:30 Bogotá window. Dry runs never write state,
-so testing won't suppress a real alert. No dependencies; stdlib only.
-
-## Known limitations
-
-**GitHub Actions cron is not punctual.** Scheduled runs are best-effort and get
-delayed under load, sometimes 5–15 minutes, worst around the top of the hour.
-The 5-minute schedule is a ceiling, not a guarantee. If the `[YA CERRADO]`
-alerts pile up, move this to a small always-on VPS where cron is exact.
-
-**The crawler-UA access path is unofficial.** It sends a user-agent we aren't,
-which is a Facebook ToS gray area. Nothing is tied to any account, so the
-personal risk is nil, but Meta could start verifying crawler IPs and break it
-without notice. The watcher alerts you (`Game watcher is broken`) after 3
-consecutive polls that return nothing, so it fails loudly rather than silently
-going quiet. If that happens, the fallback is a real browser session via
-Playwright with saved cookies.
-
-**Feed freshness is partly verified.** On 2026-09-10 the crawler-facing view
-showed the same newest post as the Facebook app, so it isn't serving a stale
-cache. What that check *can't* tell us is whether the view lags by seconds or
-by minutes, since both sides were idle.
-
-Every alert therefore carries its own age (`publicado hace 7 min`), and CI logs
-print `lag=Nmin`. That number is cache lag plus cron lag combined — the one that
-actually matters. Watch the first few real alerts: consistently under ~10 min is
-working as intended; consistently higher points at GitHub's cron scheduler, and
-the fix is an always-on VPS with real cron.
-
-**Scheduled workflows auto-disable after 60 days of repo inactivity.** State
-commits count as activity, so as long as the page posts occasionally this stays
-alive on its own.
-
-## Running on a Mac (primary) with GitHub as backup
-
-Facebook blocks GitHub's datacenter IPs — measured at 52% of polls, with one
-17-hour spell — and GitHub delays the day's first scheduled start by 2–4 hours.
-A home IP is not blocked and `launchd` fires on time, so the Mac runs as the
-primary watcher and GitHub stays on to cover the hours the Mac is asleep.
-
-Both share `state/seen.json` through git, and both pull before polling, so
-whichever sees a post first records it and the other stays quiet.
-
-### Install
-
-```sh
-cp com.josemariogutierrez.gameswatcher.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.josemariogutierrez.gameswatcher.plist
-```
-
-Secrets live in a gitignored `.env` beside `watcher.py`:
+`.env` beside `watcher.py`, gitignored, `chmod 600`:
 
 ```sh
 TELEGRAM_BOT_TOKEN=...
@@ -199,17 +139,87 @@ TELEGRAM_CHAT_ID=...
 ALERT_ALL=1
 ```
 
-`chmod 600 .env`. The plist runs `run-local.sh` every 5 minutes; `watcher.py`
-exits immediately outside the 10:30–21:30 Bogotá window, so no calendar rules
-are needed. After sleep, launchd runs the missed job once on wake.
+GitHub reads the same values from repo secrets. ntfy is still supported as a
+fallback via `NTFY_TOPIC`; Telegram wins when both are set.
 
-### Managing it
+### Active hours
+
+10:30–21:30 Bogotá, set by `ACTIVE_START` / `ACTIVE_END` in `watcher.py`.
+Outside it the watcher exits immediately, so no scheduler rules are needed.
+
+### Watching a different page
+
+Change `PAGE_SLUG` at the top of `watcher.py`, then `python3 watcher.py --prime`
+to reset state.
+
+---
+
+## Setup from scratch
+
+1. **Telegram bot** — message [@BotFather](https://t.me/BotFather), send
+   `/newbot`, keep the token. Then message your new bot once; bots cannot
+   message you first. Get the chat id:
+
+   ```sh
+   curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
+     | python3 -c "import sys,json;print(json.load(sys.stdin)['result'][-1]['message']['chat']['id'])"
+   ```
+
+2. **Local `.env`** with those two values, then `chmod 600 .env`.
+
+3. **Install the launchd agent:**
+
+   ```sh
+   cp com.josemariogutierrez.gameswatcher.plist ~/Library/LaunchAgents/
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.josemariogutierrez.gameswatcher.plist
+   ```
+
+   The plist embeds absolute paths, so regenerate it if the repo moves.
+
+4. **GitHub backup** — keep the repo **public** (Actions minutes are unlimited
+   there; private would bill ~4,320 min/month against a 2,000 free tier). Add
+   `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as repo secrets.
+
+5. **Prime** if the committed state is stale: Actions → Run workflow → check
+   **prime**. Marks everything currently visible as seen without alerting.
+
+---
+
+## Command reference
 
 ```sh
-tail -f ~/Library/Logs/games-watcher.log                  # watch it work
-launchctl print gui/$(id -u)/com.josemariogutierrez.gameswatcher | grep -E 'state|runs|exit'
-launchctl kickstart -k gui/$(id -u)/com.josemariogutierrez.gameswatcher   # run now
-launchctl bootout gui/$(id -u)/com.josemariogutierrez.gameswatcher        # stop
+./status.sh                            # health of both watchers
+./run-local.sh                         # one manual poll (pull, poll, push)
+python3 watcher.py --test              # send a test notification
+python3 watcher.py --dry-run --force   # print what would be sent, write nothing
+python3 watcher.py --prime             # mark current posts seen, alert nothing
+python3 watcher.py --force             # real poll, ignoring the hours window
 ```
 
-The plist embeds absolute paths, so moving the repo means regenerating it.
+Dry runs never write state, so testing cannot suppress a real alert.
+
+---
+
+## Known limitations
+
+**Facebook blocks datacenter IPs.** Measured at 52% of GitHub polls, in stretches
+of 40–85 minutes that clear on their own, plus one 17-hour spell. A residential
+IP was unblocked in 6/6 tests during one of those blocks. This is why the Mac is
+primary. The block serves a 454 KB login wall titled `Facebook` instead of the
+1.8 MB real page.
+
+**The watcher alerts only when genuinely blind.** Short blocks are normal, so the
+alert is time-based: one message per spell, only after the page has been
+unreadable for 3 hours, cleared on recovery. It means the page could not be
+*read* — not that the store hasn't posted.
+
+**GitHub's scheduler is best-effort.** Starts were delayed 137–229 minutes on
+every measured day. The 36 odd-minute attempts reduce the worst case to ~20
+minutes, but there is no delivery guarantee.
+
+**The crawler user-agent is an unofficial access path.** Nothing is tied to any
+account, but Meta could start verifying crawler IPs and break it. The fallback
+would be a real browser session via Playwright.
+
+**Scheduled workflows auto-disable after 60 days of repo inactivity.** State
+commits count as activity.
