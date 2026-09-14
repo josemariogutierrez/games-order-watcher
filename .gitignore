@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 *.html
 .DS_Store
+.env
+*.log

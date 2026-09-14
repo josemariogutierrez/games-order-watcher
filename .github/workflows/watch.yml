@@ -91,6 +91,11 @@ jobs:
 
             i=$((i + 1))
             echo "--- poll #${i} $(TZ=America/Bogota date +%H:%M:%S) Bogota"
+
+            # The Mac is the primary watcher and pushes state as it goes. Pull
+            # first so we don't re-alert on a post it already reported.
+            git pull -q --rebase --autostash origin main 2>/dev/null \
+              || echo "  (pull failed, using local state)"
             python3 watcher.py || echo "  (poll reported a problem, continuing)"
 
             # Commit only when the seen map or failure counter changed;
