@@ -309,16 +309,41 @@ def send_alert(title: str, lead: str, body: str, click: str | None,
                       "(set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID, or NTFY_TOPIC)")
 
 
+# Hardcoded rather than locale-driven: launchd and GitHub runners both get the
+# C locale, where strftime would produce English names.
+DIAS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio",
+         "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+
+
 def humanize_age(seconds: float) -> str:
+    """'hace 5 min' / 'hace 1 h 30 min' / 'hace 2 dias'."""
     minutes = int(seconds // 60)
     if minutes < 1:
         return "hace menos de 1 min"
     if minutes < 60:
         return f"hace {minutes} min"
-    hours = minutes // 60
+    hours, rem = divmod(minutes, 60)
     if hours < 24:
-        return f"hace {hours} h {minutes % 60} min"
-    return f"hace {hours // 24} d"
+        return f"hace {hours} h {rem} min" if rem else f"hace {hours} h"
+    days = hours // 24
+    return "hace 1 dia" if days == 1 else f"hace {days} dias"
+
+
+def format_published(created: float) -> str:
+    """'Martes 15 de Septiembre 7:03pm (Hace 5 min)' in Bogota local time.
+
+    The year appears only when it is not the current one, so ordinary same-year
+    posts stay short.
+    """
+    dt = datetime.fromtimestamp(created, BOGOTA)
+    now = datetime.now(BOGOTA)
+    hour12 = dt.hour % 12 or 12
+    meridiem = "am" if dt.hour < 12 else "pm"
+    year = f" {dt.year}" if dt.year != now.year else ""
+    age = humanize_age(now.timestamp() - created)
+    return (f"{DIAS[dt.weekday()]} {dt.day} de {MESES[dt.month - 1]}{year} "
+            f"{hour12}:{dt.minute:02d}{meridiem} ({age[0].upper()}{age[1:]})")
 
 
 def notify_post(post: dict, matched: list[str], dry_run: bool) -> None:
@@ -326,14 +351,12 @@ def notify_post(post: dict, matched: list[str], dry_run: bool) -> None:
     snippet = " ".join(post["text"].split())[:600]
     title = f"{'[YA CERRADO] ' if already_gone else ''}Game drop: {', '.join(matched)}"
 
-    # End-to-end lag, so you can see whether alerts are actually arriving fast.
-    # This is cache lag plus cron lag combined - the number that really matters.
-    age = ""
+    # Absolute local time plus relative age: the first says when the drop
+    # happened, the second how far behind the alert is running.
     if post.get("created"):
-        delta = datetime.now(timezone.utc).timestamp() - post["created"]
-        age = f" · publicado {humanize_age(delta)}"
+        snippet = f"Publicado el {format_published(post['created'])}\n\n{snippet}"
 
-    lead = f"{', '.join(matched)}{age}"
+    lead = ", ".join(matched)
     if already_gone:
         snippet = ("[Este post ya aparece marcado como agotado/cerrado]\n\n"
                    + snippet)

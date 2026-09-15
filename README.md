@@ -64,7 +64,7 @@ JSON embedded in the HTML (`post_id`, message text, `creation_time`), and
 compares them against `state/seen.json`.
 
 Anything new that matches `keywords.txt` becomes a Telegram message with the post
-text, its age, and a direct link. Everything else is recorded silently.
+text, when it was published in Bogota time, its age, and a direct link. Everything else is recorded silently.
 
 The store edits posts in place to mark stock state — `(Agotados)`,
 `(Reserva cerrada)`, `(Últimas 2 unidades)`. A post already marked when first
@@ -199,6 +199,21 @@ python3 watcher.py --force             # real poll, ignoring the hours window
 Dry runs never write state, so testing cannot suppress a real alert.
 
 ---
+
+## If the local watcher stops working
+
+It alerts you by itself: if `watcher.py` cannot even run (a broken toolchain,
+for instance), `run-local.sh` sends a Telegram message with plain `curl`, which
+does not depend on the Xcode tools. Rate-limited to once per 6 hours.
+
+A known cause on this Mac: `xcode-select -p` points at full Xcode, whose `git`
+and `python3` stubs refuse to run until the Xcode license is accepted. That
+broke every poll for hours, silently, because the alerting code was itself the
+thing that could not run. Fix:
+
+```sh
+sudo xcodebuild -license accept
+```
 
 ## Known limitations
 

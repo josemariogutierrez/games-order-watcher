@@ -27,6 +27,24 @@ git pull -q --rebase --autostash origin main 2>/dev/null \
 python3 watcher.py
 rc=$?
 
+# watcher.py alerts about its own problems, but it cannot alert if python3
+# itself will not run (an unaccepted Xcode license broke every poll for hours,
+# silently, because the alerting code was the thing that was broken). curl does
+# not depend on the Xcode toolchain, so use it directly. Rate-limited so a
+# persistent breakage does not message every 5 minutes.
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+  log "ERROR: watcher.py exited $rc"
+  marker="$REPO/state/.last-toolfail-alert"
+  now=$(date +%s)
+  last=$(cat "$marker" 2>/dev/null || echo 0)
+  if [ "$(( now - last ))" -gt 21600 ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+    curl -s -m 20 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -d chat_id="${TELEGRAM_CHAT_ID:-}" \
+      --data-urlencode text="El watcher local no puede ejecutarse (codigo $rc). No estas recibiendo alertas desde el Mac. Revisa: tail ~/Library/Logs/games-watcher.log" \
+      >/dev/null && echo "$now" > "$marker" && log "sent tool-failure alert"
+  fi
+fi
+
 # Commit only a real change: last_success moves every poll and would otherwise
 # produce a commit every 5 minutes.
 changed=$(git diff -U0 -- state/seen.json \
