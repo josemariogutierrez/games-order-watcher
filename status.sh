@@ -19,7 +19,12 @@ if [ -f "$LOG" ]; then
   last=$(grep -oE "^[0-9-]+ [0-9]{2}:[0-9]{2} Bogota" "$LOG" | tail -1 | sed 's/ Bogota//')
   if [ -n "$last" ]; then
     mins=$(( ( $(date +%s) - $(date -j -f "%Y-%m-%d %H:%M" "$last" +%s 2>/dev/null || echo 0) ) / 60 ))
-    if   [ "$mins" -le 10 ]; then c=$g; note="polling normally"
+    # Outside 10:30-21:30 Bogota the watcher skips on purpose, so a long gap
+    # there is expected rather than a fault.
+    nowmin=$(( 10#$(TZ=America/Bogota date +%H) * 60 + 10#$(TZ=America/Bogota date +%M) ))
+    if [ "$nowmin" -lt 630 ] || [ "$nowmin" -gt 1290 ]; then
+      c=$y; note="outside active hours (10:30-21:30), resumes automatically"
+    elif [ "$mins" -le 10 ]; then c=$g; note="polling normally"
     elif [ "$mins" -le 60 ]; then c=$y; note="late - Mac may have slept"
     else                          c=$r; note="stale - Mac asleep or agent stopped"
     fi
