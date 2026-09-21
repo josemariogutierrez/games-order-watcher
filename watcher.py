@@ -289,12 +289,30 @@ def telegram_send(token: str, chat_id: str, title: str, lead: str, body: str,
         raise OSError(f"Telegram rejected the message: {result}")
 
 
+def watcher_source() -> tuple[str, str]:
+    """(emoji, label) for whichever machine is sending.
+
+    GitHub Actions always sets GITHUB_ACTIONS=true. Anything else is the Mac.
+    WATCHER_SOURCE overrides both, for testing or a third host.
+    """
+    override = os.environ.get("WATCHER_SOURCE", "").strip()
+    if override:
+        return ("*", override)
+    if os.environ.get("GITHUB_ACTIONS", "").strip().lower() == "true":
+        return ("\u2601\ufe0f", "GitHub (respaldo)")
+    return ("\U0001f4bb", "Mac (local)")
+
+
 def send_alert(title: str, lead: str, body: str, click: str | None,
                priority: str, tags: str, dry_run: bool) -> None:
     """Send via Telegram when it's configured, otherwise ntfy."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     topic = os.environ.get("NTFY_TOPIC", "").strip()
+
+    emoji, label = watcher_source()
+    title = f"{emoji} {title}"
+    body = f"{body}\n\nDetectado por: {label}"
 
     if dry_run:
         via = "telegram" if (token and chat_id) else "ntfy" if topic else "nowhere"
