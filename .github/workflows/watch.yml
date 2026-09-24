@@ -77,8 +77,17 @@ jobs:
 
           start_window=$(TZ=America/Bogota date -d "today ${WINDOW_START}" +%s)
           end_window=$(TZ=America/Bogota date -d "today ${WINDOW_END}" +%s)
-          if [ "$(date +%s)" -lt "$start_window" ]; then
-            echo "Before the window opens; nothing to do."; exit 0
+          # A start trigger lands before the window more often than not, and
+          # exiting here left the backup idle until the next one - a 17 min
+          # hole at the open. Wait it out instead when the wait is short.
+          wait=$(( start_window - $(date +%s) ))
+          if [ "$wait" -gt 0 ]; then
+            if [ "$wait" -gt 3600 ]; then
+              echo "Window opens in $((wait / 60)) min; too far off, exiting."
+              exit 0
+            fi
+            echo "Window opens in $((wait / 60)) min; waiting."
+            sleep "$wait"
           fi
           end_max=$(( $(date +%s) + MAX_MINUTES * 60 ))
           echo "Looping every ${POLL_SECONDS}s until $(date -d @${end_window} -u +%H:%M) UTC"
