@@ -9,8 +9,8 @@ on:
     # delayed one is covered by the next. Concurrency keeps at most one job
     # running plus one pending, and a job that starts outside the window exits
     # in seconds, so the extra triggers are cheap.
-    # 15:00-02:59 UTC spans the 10:30-21:30 Bogota window (UTC-5).
-    - cron: "7,27,47 15-23 * * *"
+    # 14:00-02:59 UTC spans the 9:30-21:30 Bogota window (UTC-5).
+    - cron: "7,27,47 14-23 * * *"
     - cron: "7,27,47 0-2 * * *"
   workflow_dispatch:
     inputs:
@@ -39,7 +39,7 @@ permissions:
 env:
   POLL_SECONDS: 300
   MAX_MINUTES: 300        # stay well under the 6h job ceiling
-  WINDOW_START: "10:30"   # Bogota
+  WINDOW_START: "09:30"   # Bogota
   WINDOW_END: "21:30"     # Bogota
 
 jobs:

@@ -37,7 +37,7 @@ STATE_PATH = ROOT / "state" / "seen.json"
 KEYWORDS_PATH = ROOT / "keywords.txt"
 
 BOGOTA = timezone(timedelta(hours=-5))  # America/Bogota, no DST
-ACTIVE_START = (10, 30)
+ACTIVE_START = (9, 30)
 ACTIVE_END = (21, 30)
 
 SEEN_LIMIT = 500  # keep the state file small

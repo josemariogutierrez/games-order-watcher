@@ -45,13 +45,13 @@ set -a && . ./.env && set +a && python3 watcher.py --test
 ```
 
 Re-sends the newest real post through the normal alert path, so it exercises the
-true formatting. Touches no state. From a phone: GitHub â Actions â *Watch game
-store* â Run workflow â check **test**.
+true formatting. Touches no state. From a phone: GitHub → Actions → *Watch game
+store* → Run workflow → check **test**.
 
 ### Resource use
 
 Measured, not estimated: **31 MB peak RAM for ~3 seconds per poll**, then the
-process exits â nothing persists between polls, so it cannot leak. The log grows
+process exits — nothing persists between polls, so it cannot leak. The log grows
 ~24 KB/day (~8 MB/year).
 
 ---
@@ -66,12 +66,12 @@ compares them against `state/seen.json`.
 Anything new that matches `keywords.txt` becomes a Telegram message with the post
 text, when it was published in Bogota time, its age, and a direct link. Everything else is recorded silently.
 
-The store edits posts in place to mark stock state â `(Agotados)`,
-`(Reserva cerrada)`, `(Ãltimas 2 unidades)`. A post already marked when first
+The store edits posts in place to mark stock state — `(Agotados)`,
+`(Reserva cerrada)`, `(Últimas 2 unidades)`. A post already marked when first
 seen is titled `[YA CERRADO]` and downgraded, so a run of those means detection
 is too slow.
 
-Python 3 standard library only â no dependencies, no install step.
+Python 3 standard library only — no dependencies, no install step.
 
 ---
 
@@ -80,8 +80,8 @@ Python 3 standard library only â no dependencies, no install step.
 | | Mac (primary) | GitHub Actions (backup) |
 |---|---|---|
 | Polls | every 5 min via `launchd` | every 5 min inside a long-running job |
-| Facebook blocking | **0%** measured | **~52%** of polls, in 40â85 min stretches |
-| Timing | exact | start delayed 2â4h; one post arrived 151 min late |
+| Facebook blocking | **0%** measured | **~52%** of polls, in 40–85 min stretches |
+| Timing | exact | start delayed 2–4h; one post arrived 151 min late |
 | Runs when Mac sleeps | no | yes |
 
 Facebook blocks GitHub's datacenter IPs but not a residential one, so the Mac is
@@ -92,9 +92,9 @@ whichever sees a post first records it and the other stays quiet. Only the
 seen-posts map is shared; failure counters stay per-machine, since the Mac is not
 blind when GitHub is.
 
-GitHub attempts 36 starts a day at `:07/:27/:47` â deliberately odd minutes,
+GitHub attempts 36 starts a day at `:07/:27/:47` — deliberately odd minutes,
 since `:00` and `:30` are the most congested and were being delayed for hours.
-Each job then polls every 5 minutes internally until 21:30 BogotÃ¡ or 5 hours
+Each job then polls every 5 minutes internally until 21:30 Bogotá or 5 hours
 elapse, which is immune to cron drop once running.
 
 ### A caveat about Mac sleep
@@ -113,7 +113,7 @@ sudo pmset -c sleep 0     # only while plugged in; battery and display unaffecte
 ### Keywords
 
 Edit `keywords.txt`. One per line, case- and accent-insensitive (`pokemon`
-matches `PokÃ©mon`), substring-based (`zelda` matches `The Legend of Zelda`).
+matches `Pokémon`), substring-based (`zelda` matches `The Legend of Zelda`).
 Prefix with `re:` for a raw regex. Ships with `zelda`, `pokemon`,
 `resident evil` plus commented suggestions and the store's own hashtags
 (`#Reserva`, `#LanzamientoMundial`, `#HotPrice`).
@@ -123,9 +123,9 @@ Prefix with `re:` for a raw regex. Ships with `zelda`, `pokemon`,
 Currently **on**. It ignores keywords and alerts on everything, labeled
 `post nuevo`.
 
-- Mac: `ALERT_ALL=1` in `.env` â set to `0` for keyword-only
-- GitHub: the `ALERT_ALL` repo variable (Settings â Secrets and variables â
-  Actions â Variables)
+- Mac: `ALERT_ALL=1` in `.env` — set to `0` for keyword-only
+- GitHub: the `ALERT_ALL` repo variable (Settings → Secrets and variables →
+  Actions → Variables)
 
 Change both, or they'll disagree.
 
@@ -144,7 +144,7 @@ fallback via `NTFY_TOPIC`; Telegram wins when both are set.
 
 ### Active hours
 
-10:30â21:30 BogotÃ¡, set by `ACTIVE_START` / `ACTIVE_END` in `watcher.py`.
+9:30–21:30 Bogotá, set by `ACTIVE_START` / `ACTIVE_END` in `watcher.py`.
 Outside it the watcher exits immediately, so no scheduler rules are needed.
 
 ### Watching a different page
@@ -156,7 +156,7 @@ to reset state.
 
 ## Setup from scratch
 
-1. **Telegram bot** â message [@BotFather](https://t.me/BotFather), send
+1. **Telegram bot** — message [@BotFather](https://t.me/BotFather), send
    `/newbot`, keep the token. Then message your new bot once; bots cannot
    message you first. Get the chat id:
 
@@ -176,11 +176,11 @@ to reset state.
 
    The plist embeds absolute paths, so regenerate it if the repo moves.
 
-4. **GitHub backup** â keep the repo **public** (Actions minutes are unlimited
+4. **GitHub backup** — keep the repo **public** (Actions minutes are unlimited
    there; private would bill ~4,320 min/month against a 2,000 free tier). Add
    `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` as repo secrets.
 
-5. **Prime** if the committed state is stale: Actions â Run workflow â check
+5. **Prime** if the committed state is stale: Actions → Run workflow → check
    **prime**. Marks everything currently visible as seen without alerting.
 
 ---
@@ -234,7 +234,7 @@ sudo xcodebuild -license accept
 ## Known limitations
 
 **Facebook blocks datacenter IPs.** Measured at 52% of GitHub polls, in stretches
-of 40â85 minutes that clear on their own, plus one 17-hour spell. A residential
+of 40–85 minutes that clear on their own, plus one 17-hour spell. A residential
 IP was unblocked in 6/6 tests during one of those blocks. This is why the Mac is
 primary. The block serves a 454 KB login wall titled `Facebook` instead of the
 1.8 MB real page.
@@ -242,9 +242,9 @@ primary. The block serves a 454 KB login wall titled `Facebook` instead of the
 **The watcher alerts only when genuinely blind.** Short blocks are normal, so the
 alert is time-based: one message per spell, only after the page has been
 unreadable for 3 hours, cleared on recovery. It means the page could not be
-*read* â not that the store hasn't posted.
+*read* — not that the store hasn't posted.
 
-**GitHub's scheduler is best-effort.** Starts were delayed 137â229 minutes on
+**GitHub's scheduler is best-effort.** Starts were delayed 137–229 minutes on
 every measured day. The 36 odd-minute attempts reduce the worst case to ~20
 minutes, but there is no delivery guarantee.
 
